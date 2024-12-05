@@ -1,137 +1,142 @@
 #include <fstream>
 #include <iostream>
-#include <windows.h>
+#include <memory>
+#include <string>
+#include <vector>
 
-enum class Format
-{
-    undefined,
-    kText,
-    kHTML,
-    kJSON
-};
-
-class Printable 
-{
-protected:
-    Format PrintableFormat = Format::undefined;
-public:
-    virtual void SetPrintFormat() = 0;
-    Format GetFormat() const { return PrintableFormat; }
-    virtual ~Printable() = default;
-    virtual std::string PrintClient(std::string& data) const = 0;
-};
-
-class AsHTML: public Printable
+class Printer
 {
 public:
-    AsHTML() { SetPrintFormat(); }
+    virtual ~Printer() = default;
 
-    virtual void SetPrintFormat()override
+    // Оборачивание одного элемента
+    virtual std::string wrapElement(const std::string& data) const = 0;
+
+    // Оборачивание отчёта
+    virtual std::string wrapReport(const std::vector<std::string>& elements) const = 0;
+};
+
+class PrinterHTML : public Printer
+{
+public:
+    std::string wrapElement(const std::string& data) const override
     {
-        PrintableFormat = Format::kHTML;
+        return "<p>" + data + "</p>";
     }
-    virtual std::string PrintClient(std::string& data) const override
+
+    std::string wrapReport(const std::vector<std::string>& elements) const override
     {
-        return "<html>" + data + "<html/>";
+        std::string result = "<html>\n";
+        for (const auto& element : elements)
+        {
+            result += wrapElement(element) + "\n";
+        }
+        result += "</html>";
+        return result;
     }
 };
 
-class AsText : public Printable
+class PrinterJSON : public Printer
 {
 public:
-    AsText() { SetPrintFormat(); }
-
-    virtual void SetPrintFormat()override
+    std::string wrapElement(const std::string& data) const override
     {
-        PrintableFormat = Format::kText;
+        return "{ \"item\": \"" + data + "\" }";
     }
 
-    virtual std::string PrintClient(std::string& data) const override
-    {        
+    std::string wrapReport(const std::vector<std::string>& elements) const override
+    {
+        std::string result = "[\n";
+        for (size_t i = 0; i < elements.size(); ++i)
+        {
+            result += wrapElement(elements[i]);
+            if (i < elements.size() - 1)
+            {
+                result += ",";
+            }
+            result += "\n";
+        }
+        result += "]";
+        return result;
+    }
+};
+
+class PrinterText : public Printer
+{
+public:
+    std::string wrapElement(const std::string& data) const override
+    {
         return data;
     }
-};
 
-class AsJSON : public Printable
-{
-public:
-    AsJSON() { SetPrintFormat(); }
-
-    virtual void SetPrintFormat()override
+    std::string wrapReport(const std::vector<std::string>& elements) const override
     {
-        PrintableFormat = Format::kJSON;
-    }
-
-    virtual std::string PrintClient( std::string& data) const override
-    {
-        return "{ \"data\": \"" + data + "\"}";
-    }
-};
-
-class PrintFactory
-{
-public:
-    static std::unique_ptr<Printable> Create(Format format)
-    {
-        switch (format)
+        std::string result;
+        for (const auto& element : elements)
         {
-        case Format::kHTML:
-            return std::make_unique<AsHTML>();
-        case Format::kJSON:
-            return std::make_unique<AsJSON>();
-        case Format::kText:
-            return std::make_unique<AsText>();   
-        default:
-            throw std::runtime_error("Invalid format");
-        }        
+            result += wrapElement(element) + "\n";
+        }
+        return result;
     }
 };
 
-class Data
-{   
-    std::string data_;
-public:
-    Data(std::string data):data_(data) {}
-    std::string get_Data()
-    {
-        return data_;
-    }
-};
-
-class Saver
+class Report
 {
 public:
-    void saveTo(std::ofstream& file, const Printable& printable, std::string& data)
-    {        
-        auto P = PrintFactory::Create(printable.GetFormat());
-        file << printable.PrintClient(data);
-    }
+    std::string date;
+    std::string title;
+    std::string content;
+
+    Report(std::string d, std::string t, std::string c)
+        : date(std::move(d)), title(std::move(t)), content(std::move(c)) {}
 };
 
+class ReportFormatter
+{
+public:
+    static void saveReportToFile(std::ofstream& file, const Report& report, const std::shared_ptr<Printer>& printer)
+    {
+        std::vector<std::string> elements;
+        elements.push_back(printer->wrapElement(report.date));
+        elements.push_back(printer->wrapElement(report.title));
+        elements.push_back(printer->wrapElement(report.content));
+
+        file << printer->wrapReport(elements);
+    }
+};
 
 int main()
 {
-    SetConsoleCP(1251);
-    SetConsoleOutputCP(1251);
+    std::cout << "Введите дату отчёта: ";
+    std::string date;
+    std::cin >> date;
 
-    setlocale(LC_ALL, "Russian");
+    std::cout << "Введите заголовок отчёта: ";
+    std::string title;
+    std::cin >> title;
 
-    std::cout << "Введите сообщение: " << std::endl;
-    std::string Text;
-    std::cin >> Text;
+    std::cout << "Введите содержание отчёта: ";
+    std::string content;
+    std::cin >> content;
 
-    Data data(Text);
-    Saver saver;
+    Report report(date, title, content);
 
-    std::ofstream text_stream("output.txt");
-    AsText as_text;
-    saver.saveTo(text_stream, as_text, Text);
+    // Сохранение в текстовый файл
+    std::ofstream textFile("report.txt");
+    auto textPrinter = std::make_shared<PrinterText>();
+    ReportFormatter::saveReportToFile(textFile, report, textPrinter);
 
-    std::ofstream html_stream("output.html");
-    AsHTML as_html;
-    saver.saveTo(html_stream, as_html, Text);
+    // Сохранение в HTML файл
+    std::ofstream htmlFile("report.html");
+    auto htmlPrinter = std::make_shared<PrinterHTML>();
+    ReportFormatter::saveReportToFile(htmlFile, report, htmlPrinter);
 
-    std::ofstream json_stream("output.json");
-    AsJSON as_json;
-    saver.saveTo(json_stream, as_json, Text);
+    // Сохранение в JSON файл
+    std::ofstream jsonFile("report.json");
+    auto jsonPrinter = std::make_shared<PrinterJSON>();
+    ReportFormatter::saveReportToFile(jsonFile, report, jsonPrinter);
+
+    std::cout << "Отчёты сохранены." << std::endl;
+
+    return 0;
 }
